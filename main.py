@@ -33,7 +33,7 @@ target_wrt_field = np.array(
     ]
 )
 # Physical characteristics
-shooter_wrt_robot = np.array([[0.0], [0.0], [20 * 0.0254], [0.0], [0.0], [0.0]])
+shooter_height = 20 * 0.0254  # m
 g = 9.81  # m/s²
 max_shooter_velocity = 30  # m/s
 ball_mass = 0.5 / 2.205  # kg
@@ -81,9 +81,9 @@ def setup_problem(distance, robot_vx, robot_vy, max_horizontal_velocity):
     Set up the problem and any shared constraints between the two solve modes (min and fix vel)
     """
     # Robot initial state
-    robot_wrt_field = np.array([[-distance], [0], [0.0], [robot_vx], [robot_vy], [0.0]])
-
-    shooter_wrt_field = robot_wrt_field + shooter_wrt_robot
+    shooter_wrt_field = np.array(
+        [[-distance], [0], [shooter_height], [robot_vx], [robot_vy], [0.0]]
+    )
 
     problem = Problem()
 
@@ -188,7 +188,7 @@ def min_velocity(distance, robot_vx, robot_vy):
     # Minimize initial velocity
     problem.minimize(v0_wrt_shooter.T @ v0_wrt_shooter)
 
-    status = problem.solve(tolerance=0.001)
+    status = problem.solve()
     if status == ExitStatus.SUCCESS:
         # Initial velocity vector with respect to shooter
         v0 = v0_wrt_shooter.value()
@@ -244,9 +244,12 @@ def fixed_pitch(distance, pitch, prev_X, robot_vx, robot_vy):
     for k in range(N):
         v[:, k].set_value(prev_v[:, k].value())
 
-    problem.subject_to(atan2(v_z[0], hypot(v_x[0], v_y[0])) == pitch)
+    problem.subject_to(
+        atan2(v0_wrt_shooter[2, 0], hypot(v0_wrt_shooter[0, 0], (v0_wrt_shooter[1, 0])))
+        == pitch
+    )
 
-    status = problem.solve(tolerance=0.001)
+    status = problem.solve()
     if status == ExitStatus.SUCCESS:
         # Initial velocity vector with respect to shooter
         v0 = v0_wrt_shooter.value()
@@ -334,7 +337,7 @@ def max_velocity(distance, min_vel_solve, robot_vx, robot_vy):
         == max_shooter_velocity**2
     )
 
-    status = problem.solve(tolerance=0.001)
+    status = problem.solve()
     if status == ExitStatus.SUCCESS:
         # Initial velocity vector with respect to shooter
         v0 = v0_wrt_shooter.value()
@@ -373,10 +376,10 @@ if __name__ == "__main__":
     file.write("  static {\n")
 
     start_distance = 0.5
-    end_distance = 10.5
+    end_distance = 15
 
-    distance_samples = 20
-    delta_pitch = np.deg2rad(2.5)
+    distance_samples = 30
+    delta_pitch = np.deg2rad(5)
     for i in range(distance_samples):
         distance = lerp(start_distance, end_distance, i / (distance_samples - 1))
         vx = 0

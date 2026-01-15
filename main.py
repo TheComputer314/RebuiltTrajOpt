@@ -138,7 +138,7 @@ def setup_problem(distance, robot_vx, robot_vy, max_horizontal_velocity):
     # downwards velocity constraint above
     problem.subject_to(atan2(v_z[0], hypot(v_x[0], v_y[0])) >= np.deg2rad(45))
 
-    return problem, shooter_wrt_field, v0_wrt_shooter, X
+    return problem, shooter_wrt_field, v0_wrt_shooter, T, X
 
 
 def min_velocity(distance, robot_vx, robot_vy):
@@ -146,7 +146,7 @@ def min_velocity(distance, robot_vx, robot_vy):
     Solve for minimum velocity.
     :returns: A tuple of [True, velocity, pitch, yaw, X] if it succeeds at a solve, and a tuple of[False, 0] if it fails.
     """
-    problem, shooter_wrt_field, v0_wrt_shooter, X = setup_problem(
+    problem, shooter_wrt_field, v0_wrt_shooter,T, X = setup_problem(
         distance, robot_vx, robot_vy, 6.5
     )
 
@@ -201,7 +201,7 @@ def min_velocity(distance, robot_vx, robot_vy):
             print(f"Pitch = {np.rad2deg(pitch):.03f}°")
             print(f"Yaw = {np.rad2deg(yaw):.03f}°")
 
-        return True, velocity, pitch, yaw, X
+        return True, velocity, pitch, yaw, T, X
     print(f"Infeasible at distance {distance:.03f} m with status {status.name}")
     return False, 0
 
@@ -215,7 +215,7 @@ def fixed_velocity(distance, robot_vx, robot_vy, target_vel, prev_X):
     prev_v_x = prev_X[3, :]
     prev_v_y = prev_X[4, :]
 
-    problem, shooter_wrt_field, v0_wrt_shooter, X = setup_problem(
+    problem, shooter_wrt_field, v0_wrt_shooter,T, X = setup_problem(
         distance,
         robot_vx,
         robot_vy,
@@ -276,7 +276,7 @@ def fixed_velocity(distance, robot_vx, robot_vy, target_vel, prev_X):
             print(f"Pitch = {np.rad2deg(pitch):.03f}°")
             print(f"Yaw = {np.rad2deg(yaw):.03f}°")
 
-        return True, velocity, pitch, yaw, X
+        return True, velocity, pitch, yaw, T, X
     print(
         f"Infeasible at distance {distance:.03f} with velocity {target_vel:.03f} m/s with status {status.name}"
     )
@@ -293,8 +293,10 @@ if __name__ == "__main__":
     ax.set_xlabel("Distance (m)")
     ax.set_ylim(5, max_shooter_velocity)
     ax.set_ylabel("Shooter velocity (m/s)")
-    ax.set_zlim(45, 90)
-    ax.set_zlabel("Hood angle (deg)")
+    ax.set_zlim(0, 5)
+    ax.set_zlabel("Time to target (s)")
+    # ax.set_zlim(45, 90)
+    # ax.set_zlabel("Hood angle (deg)")
 
     distance_samples = 20
     velocity_samples = 10
@@ -305,6 +307,7 @@ if __name__ == "__main__":
 
         velocities = []
         angles = []
+        times = []
 
         # Solve for minimum velocity
         min_vel_solve = min_velocity(distance, vx, vy)
@@ -313,19 +316,22 @@ if __name__ == "__main__":
         if min_vel_solve[0]:
             velocities.append(min_vel_solve[1])
             angles.append(np.rad2deg(min_vel_solve[2]))
+            times.append(min_vel_solve[4].value())
             prev_solve = min_vel_solve
             for j in range(velocity_samples):
                 vel = lerp(
                     min_vel_solve[1], max_shooter_velocity, 1 / (1.5**(velocity_samples - j - 1))
                 )
                 # Feed previous solve into new solve as an initial guess
-                solve = fixed_velocity(distance, vx, vy, vel, prev_solve[4])
+                solve = fixed_velocity(distance, vx, vy, vel, prev_solve[5])
                 if solve[0]:
                     velocities.append(vel)
                     angles.append(np.rad2deg(solve[2]))
+                    times.append(solve[4].value())
                     prev_solve = solve
                     j += 1
                 else:
                     break
-        ax.scatter(distance, velocities, angles)
+        # ax.scatter(distance, velocities, angles)
+        ax.scatter(distance, velocities, times)
     plt.show()

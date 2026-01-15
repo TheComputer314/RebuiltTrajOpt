@@ -358,6 +358,50 @@ def max_velocity(distance, min_vel_solve, robot_vx, robot_vy):
     print(f"Infeasible at distance {distance:.03f} m with status {status.name}")
     return False, 0
 
+delta_pitch = np.deg2rad(5)
+
+def solve_distance(distance, vx, vy):
+    # Solve for minimum velocity
+    min_vel_solve = min_velocity(distance, vx, vy)
+    # If the position is possible, lerp between min velocity and max velocity
+    # to search the in between velocities
+    if min_vel_solve[0]:
+        max_vel_solve = max_velocity(distance, min_vel_solve, vx, vy)
+        if not max_vel_solve[0]:
+            raise Exception("Max vel solve failed")
+
+        min_max_pitch_delta = max_vel_solve[2] - min_vel_solve[2]
+        pitch_samples = math.ceil(min_max_pitch_delta / delta_pitch)
+
+        file.write("    table.put(\n")
+        file.write(f"      {distance},\n")
+        file.write("      makeTable(\n")
+        file.write(
+            f"        entry({min_vel_solve[1]}, new ShotResult("
+            f"{np.rad2deg(min_vel_solve[2])},  {min_vel_solve[3]}, {min_vel_solve[4]})),\n"
+        )
+        prev_solve = min_vel_solve
+        for i in range(1, pitch_samples - 1):
+            pitch = lerp(min_vel_solve[2], max_vel_solve[2], i / (pitch_samples - 1))
+            solve = fixed_pitch(distance, pitch, prev_solve[5], vx, vy)
+            if solve[0]:
+                file.write(
+                    f"        entry({solve[1]}, new ShotResult("
+                    f"{np.rad2deg(solve[2])},  {solve[3]}, {solve[4]})),\n"
+                )
+                prev_solve = solve
+            else:
+                break
+            if pitch + delta_pitch > max_vel_solve[2]:
+                break
+        file.write(
+            f"        entry({max_vel_solve[1]}, new ShotResult("
+            f"{np.rad2deg(max_vel_solve[2])},  {max_vel_solve[3]}, {max_vel_solve[4]}))\n"
+        )
+        file.write("      )\n")
+        file.write("    );\n")
+        return min_vel_solve[2]
+
 
 if __name__ == "__main__":
     file: TextIOWrapper = open("HubShotTable.java", "w")
@@ -379,48 +423,12 @@ if __name__ == "__main__":
     end_distance = 15
 
     distance_samples = 30
-    delta_pitch = np.deg2rad(5)
+
     for i in range(distance_samples):
         distance = lerp(start_distance, end_distance, i / (distance_samples - 1))
         vx = 0
         vy = 0
-
-        # Solve for minimum velocity
-        min_vel_solve = min_velocity(distance, vx, vy)
-        # If the position is possible, lerp between min velocity and max velocity
-        # to search the in between velocities
-        if min_vel_solve[0]:
-            max_vel_solve = max_velocity(distance, min_vel_solve, vx, vy)
-            if not max_vel_solve[0]:
-                raise Exception("Max vel solve failed")
-
-            file.write("    table.put(\n")
-            file.write(f"      {distance},\n")
-            file.write("      makeTable(\n")
-            file.write(
-                f"        entry({min_vel_solve[1]}, new ShotResult("
-                f"{np.rad2deg(min_vel_solve[2])},  {min_vel_solve[3]}, {min_vel_solve[4]})),\n"
-            )
-            prev_solve = min_vel_solve
-            while True:
-                pitch = prev_solve[2] + delta_pitch
-                solve = fixed_pitch(distance, pitch, prev_solve[5], vx, vy)
-                if solve[0]:
-                    file.write(
-                        f"        entry({solve[1]}, new ShotResult("
-                        f"{np.rad2deg(solve[2])},  {solve[3]}, {solve[4]})),\n"
-                    )
-                    prev_solve = solve
-                else:
-                    break
-                if pitch + delta_pitch > max_vel_solve[2]:
-                    break
-            file.write(
-                f"        entry({max_vel_solve[1]}, new ShotResult("
-                f"{np.rad2deg(max_vel_solve[2])},  {max_vel_solve[3]}, {max_vel_solve[4]}))\n"
-            )
-            file.write("      )\n")
-            file.write("    );\n")
+        solve_distance(distance, vx, vy)
 
     file.write("  }\n\n")
 

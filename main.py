@@ -12,8 +12,8 @@ https://github.com/SleipnirGroup/Sleipnir/blob/main/examples/frc_2022_shooter/ma
 """
 
 import math
+from io import TextIOWrapper
 
-import matplotlib.pyplot as plt
 import numpy as np
 from numpy.linalg import norm
 from sleipnir.autodiff import VariableMatrix, atan2, hypot
@@ -40,6 +40,7 @@ ball_mass = 0.5 / 2.205  # kg
 ball_diameter = 5.91 * 0.0254  # m
 
 printResults = False
+
 
 def lerp(a, b, t):
     return a + t * (b - a)
@@ -146,7 +147,7 @@ def min_velocity(distance, robot_vx, robot_vy):
     Solve for minimum velocity.
     :returns: A tuple of [True, velocity, pitch, yaw, X] if it succeeds at a solve, and a tuple of[False, 0] if it fails.
     """
-    problem, shooter_wrt_field, v0_wrt_shooter,T, X = setup_problem(
+    problem, shooter_wrt_field, v0_wrt_shooter, T, X = setup_problem(
         distance, robot_vx, robot_vy, 6.5
     )
 
@@ -187,7 +188,7 @@ def min_velocity(distance, robot_vx, robot_vy):
     # Minimize initial velocity
     problem.minimize(v0_wrt_shooter.T @ v0_wrt_shooter)
 
-    status = problem.solve(tolerance = .01)
+    status = problem.solve(tolerance=0.01)
     if status == ExitStatus.SUCCESS:
         # Initial velocity vector with respect to shooter
         v0 = v0_wrt_shooter.value()
@@ -201,7 +202,7 @@ def min_velocity(distance, robot_vx, robot_vy):
             print(f"Pitch = {np.rad2deg(pitch):.03f}°")
             print(f"Yaw = {np.rad2deg(yaw):.03f}°")
 
-        return True, velocity, pitch, yaw, T, X
+        return True, velocity, pitch, yaw, T.value(), X
     print(f"Infeasible at distance {distance:.03f} m with status {status.name}")
     return False, 0
 
@@ -215,7 +216,7 @@ def fixed_velocity(distance, robot_vx, robot_vy, target_vel, prev_X):
     prev_v_x = prev_X[3, :]
     prev_v_y = prev_X[4, :]
 
-    problem, shooter_wrt_field, v0_wrt_shooter,T, X = setup_problem(
+    problem, shooter_wrt_field, v0_wrt_shooter, T, X = setup_problem(
         distance,
         robot_vx,
         robot_vy,
@@ -223,7 +224,7 @@ def fixed_velocity(distance, robot_vx, robot_vy, target_vel, prev_X):
         # velocity at target.
         # This makes the angle at which the shot goes in more steep, preventing the solver from
         # getting stuck with a shallow and infeasible shot angle
-        math.hypot(prev_v_x[-1].value(), prev_v_y[-1].value())
+        math.hypot(prev_v_x[-1].value(), prev_v_y[-1].value()),
     )
 
     prev_p_x = prev_X[0, :]
@@ -262,7 +263,7 @@ def fixed_velocity(distance, robot_vx, robot_vy, target_vel, prev_X):
         == target_vel**2
     )
 
-    status = problem.solve(tolerance = .01)
+    status = problem.solve(tolerance=0.01)
     if status == ExitStatus.SUCCESS:
         # Initial velocity vector with respect to shooter
         v0 = v0_wrt_shooter.value()
@@ -276,7 +277,7 @@ def fixed_velocity(distance, robot_vx, robot_vy, target_vel, prev_X):
             print(f"Pitch = {np.rad2deg(pitch):.03f}°")
             print(f"Yaw = {np.rad2deg(yaw):.03f}°")
 
-        return True, velocity, pitch, yaw, T, X
+        return True, velocity, pitch, yaw, T.value(), X
     print(
         f"Infeasible at distance {distance:.03f} with velocity {target_vel:.03f} m/s with status {status.name}"
     )
@@ -284,54 +285,82 @@ def fixed_velocity(distance, robot_vx, robot_vy, target_vel, prev_X):
 
 
 if __name__ == "__main__":
+    file: TextIOWrapper = open("HubShotTable.java", "w")
+    file.write("package frc.cotc.shooter;\n\n")
+
+    file.write("import static java.util.Map.entry;\n\n")
+
+    file.write("import edu.wpi.first.math.MathUtil;\n")
+    file.write(
+        "import edu.wpi.first.math.interpolation.InterpolatingTreeMap;\n"
+    )
+    file.write("import frc.cotc.shooter.ShotTable.ShotResult;\n")
+    file.write("import java.util.Map;\n\n")
+
+    file.write("public final class HubShotTable {\n")
+    file.write("  private HubShotTable() {}\n\n")
+    file.write("  private static final ShotTable table = new ShotTable();\n\n")
+    file.write("  static {\n")
+
     start_distance = 0.5
     end_distance = 6.5
 
-    # Setup pyplot
-    ax = plt.figure().add_subplot(projection="3d")
-    ax.set_xlim(start_distance, end_distance)
-    ax.set_xlabel("Distance (m)")
-    ax.set_ylim(5, max_shooter_velocity)
-    ax.set_ylabel("Shooter velocity (m/s)")
-    ax.set_zlim(0, 5)
-    ax.set_zlabel("Time to target (s)")
-    # ax.set_zlim(45, 90)
-    # ax.set_zlabel("Hood angle (deg)")
-
     distance_samples = 20
-    velocity_samples = 10
+    velocity_samples = 20
     for i in range(0, distance_samples):
         distance = lerp(start_distance, end_distance, i / (distance_samples - 1))
         vx = 0
         vy = 0
-
-        velocities = []
-        angles = []
-        times = []
 
         # Solve for minimum velocity
         min_vel_solve = min_velocity(distance, vx, vy)
         # If the position is possible, lerp between min velocity and max velocity
         # to search the in between velocities
         if min_vel_solve[0]:
-            velocities.append(min_vel_solve[1])
-            angles.append(np.rad2deg(min_vel_solve[2]))
-            times.append(min_vel_solve[4].value())
+            file.write("    table.put(\n")
+            file.write(f"      {distance},\n")
+            file.write("      makeTable(\n")
+            file.write(
+                f"        entry({min_vel_solve[1]}, new ShotResult("
+                f"{np.rad2deg(min_vel_solve[2])},  {min_vel_solve[3]}, {min_vel_solve[4]})),\n"
+            )
             prev_solve = min_vel_solve
             for j in range(velocity_samples):
                 vel = lerp(
-                    min_vel_solve[1], max_shooter_velocity, 1 / (1.5**(velocity_samples - j - 1))
+                    min_vel_solve[1],
+                    max_shooter_velocity,
+                    1 / (1.5 ** (velocity_samples - j - 1)),
                 )
                 # Feed previous solve into new solve as an initial guess
                 solve = fixed_velocity(distance, vx, vy, vel, prev_solve[5])
                 if solve[0]:
-                    velocities.append(vel)
-                    angles.append(np.rad2deg(solve[2]))
-                    times.append(solve[4].value())
+                    file.write(
+                        f"        entry({vel}, new ShotResult("
+                        f"{np.rad2deg(solve[2])},  {solve[3]}, {solve[4]}))"
+                    )
                     prev_solve = solve
-                    j += 1
+                    if j != velocity_samples - 1:
+                        file.write(",\n")
+                    else:
+                        file.write("\n")
                 else:
                     break
-        # ax.scatter(distance, velocities, angles)
-        ax.scatter(distance, velocities, times)
-    plt.show()
+            file.write("      )\n")
+            file.write("    );\n")
+
+    file.write("  }\n\n")
+
+    file.write("  @SafeVarargs\n")
+    file.write("  private static InterpolatingTreeMap<Double, ShotResult> makeTable(\n")
+    file.write("      Map.Entry<Double, ShotResult>... entries) {\n")
+    file.write(
+        "    var map = new InterpolatingTreeMap<>(MathUtil::inverseInterpolate, "
+        "ShotResult::interpolate);\n"
+    )
+    file.write("    for (var entry : entries) {\n")
+    file.write("      map.put(entry.getKey(), entry.getValue());\n")
+    file.write("    }\n")
+    file.write("    return map;\n")
+    file.write("  }\n")
+
+    file.write("}")

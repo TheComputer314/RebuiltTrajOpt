@@ -42,7 +42,11 @@ ball_diameter = 5.91 * 0.0254  # m
 
 # Solve settings
 delta_pitch = np.deg2rad(2.5)
-printResults = True
+start_distance = 0.5
+end_distance = 13.5
+distance_samples = 20
+distance_exponent = 2
+printResults = False
 
 
 def lerp(a, b, t):
@@ -79,13 +83,13 @@ def f(x):
 N = 40
 
 
-def setup_problem(distance, robot_vx, robot_vy):
+def setup_problem(distance):
     """
     Set up the problem and any shared constraints between the two solve modes (min and fix vel)
     """
     # Robot initial state
     shooter_wrt_field = np.array(
-        [[-distance], [0], [shooter_height], [robot_vx], [robot_vy], [0.0]]
+        [[-distance], [0], [shooter_height], [0.0], [0.0], [0.0]]
     )
 
     problem = Problem()
@@ -141,13 +145,13 @@ def setup_problem(distance, robot_vx, robot_vy):
     return problem, shooter_wrt_field, v0_wrt_shooter, T, X
 
 
-def min_velocity(distance, robot_vx, robot_vy):
+def min_velocity(distance):
     """
     Solve for minimum velocity.
     :returns: A tuple of [True, velocity, pitch, yaw, X] if it succeeds at a solve, and a tuple of[False, 0] if it fails.
     """
     problem, shooter_wrt_field, v0_wrt_shooter, T, X = setup_problem(
-        distance, robot_vx, robot_vy
+        distance
     )
 
     p_x = X[0, :]
@@ -207,13 +211,13 @@ def min_velocity(distance, robot_vx, robot_vy):
     return False, 0
 
 
-def fixed_pitch(distance, pitch, prev_X, robot_vx, robot_vy):
+def fixed_pitch(distance, pitch, prev_X):
     """
     Solve for minimum velocity.
     :returns: A tuple of [True, velocity, pitch, yaw, X] if it succeeds at a solve, and a tuple of[False, 0] if it fails.
     """
     problem, shooter_wrt_field, v0_wrt_shooter, T, X = setup_problem(
-        distance, robot_vx, robot_vy
+        distance
     )
 
     prev_p_x = prev_X[0, :]
@@ -265,7 +269,7 @@ def fixed_pitch(distance, pitch, prev_X, robot_vx, robot_vy):
     return False, 0
 
 
-def max_velocity(distance, min_vel_solve, robot_vx, robot_vy):
+def max_velocity(distance, min_vel_solve):
     # Three stage solve: solve for the average of 90 degrees and the min vel solve's pitch,
     # then solve for 89 degrees pitch, then do the actual max vel solve.
     # The solver likes the fixed pitch solve more than it likes the max vel solve,
@@ -276,19 +280,17 @@ def max_velocity(distance, min_vel_solve, robot_vx, robot_vy):
         distance,
         (min_vel_solve[2] + np.deg2rad(90)) / 2,
         min_vel_solve[4],
-        robot_vx,
-        robot_vy,
     )
     if not avg_pitch_solve[0]:
         raise Exception("Fixed pitch solve stage 1 failed")
     fixed_pitch_solve = fixed_pitch(
-        distance, np.deg2rad(89), avg_pitch_solve[4], robot_vx, robot_vy
+        distance, np.deg2rad(89), avg_pitch_solve[4]
     )
     if not fixed_pitch_solve[0]:
         raise Exception("Fixed pitch solve stage 2 failed")
 
     problem, shooter_wrt_field, v0_wrt_shooter, T, X = setup_problem(
-        distance, robot_vx, robot_vy
+        distance
     )
 
     fixed_pitch_X = fixed_pitch_solve[4]
@@ -348,13 +350,13 @@ def max_velocity(distance, min_vel_solve, robot_vx, robot_vy):
     print(f"Infeasible at distance {distance:.03f} m with status {status.name}")
     return False, 0
 
-def iterate_distance(distance, vx, vy):
+def iterate_distance(distance):
     # Solve for minimum velocity
-    min_vel_solve = min_velocity(distance, vx, vy)
+    min_vel_solve = min_velocity(distance)
     # If the position is possible, lerp between min velocity and max velocity
     # to search the in between velocities
     if min_vel_solve[0]:
-        max_vel_solve = max_velocity(distance, min_vel_solve, vx, vy)
+        max_vel_solve = max_velocity(distance, min_vel_solve)
         if not max_vel_solve[0]:
             raise Exception("Max vel solve failed")
 
@@ -366,16 +368,16 @@ def iterate_distance(distance, vx, vy):
         file.write("      makeTable(\n")
         file.write(
             f"        entry({min_vel_solve[1]}, new ShotResult("
-            f"{np.rad2deg(min_vel_solve[2])},  {min_vel_solve[3]})),\n"
+            f"{min_vel_solve[2]},  {min_vel_solve[3]})),\n"
         )
         prev_solve = min_vel_solve
         for i in range(1, pitch_samples - 1):
             pitch = lerp(min_vel_solve[2], max_vel_solve[2], i / (pitch_samples - 1))
-            solve = fixed_pitch(distance, pitch, prev_solve[4], vx, vy)
+            solve = fixed_pitch(distance, pitch, prev_solve[4])
             if solve[0]:
                 file.write(
                     f"        entry({solve[1]}, new ShotResult("
-                    f"{np.rad2deg(solve[2])},  {solve[3]})),\n"
+                    f"{solve[2]},  {solve[3]})),\n"
                 )
                 prev_solve = solve
             else:
@@ -384,7 +386,7 @@ def iterate_distance(distance, vx, vy):
                 break
         file.write(
             f"        entry({max_vel_solve[1]}, new ShotResult("
-            f"{np.rad2deg(max_vel_solve[2])},  {max_vel_solve[3]}))\n"
+            f"{max_vel_solve[2]},  {max_vel_solve[3]}))\n"
         )
         file.write("      )\n")
         file.write("    );\n")
@@ -407,16 +409,10 @@ if __name__ == "__main__":
     file.write("  private static final ShotTable table = new ShotTable();\n\n")
     file.write("  static {\n")
 
-    start_distance = 0.5
-    end_distance = 15
-
-    distance_samples = 30
-
     for i in range(distance_samples):
-        distance = lerp(start_distance, end_distance, i / (distance_samples - 1))
-        vx = 0
-        vy = 0
-        iterate_distance(distance, vx, vy)
+        distance = lerp(start_distance, end_distance, (i / (distance_samples -
+                                                            1))**distance_exponent)
+        iterate_distance(distance)
 
     file.write("  }\n\n")
 

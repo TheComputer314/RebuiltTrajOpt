@@ -1,5 +1,5 @@
 """
-FRC 2022 shooter trajectory optimization.
+FRC 2026 shooter trajectory optimization.
 
 This program uses the Sleipnir NLP solver to find the initial pitch and yaw for a game
 piece to hit the 2026 FRC game's target given an initial velocity.
@@ -44,7 +44,7 @@ ball_diameter = 5.91 * 0.0254  # m
 delta_pitch = np.deg2rad(2.5)
 start_distance = 0.5
 end_distance = 13.5
-distance_samples = 20
+distance_samples = 15
 distance_exponent = 2
 printResults = False
 
@@ -150,9 +150,7 @@ def min_velocity(distance):
     Solve for minimum velocity.
     :returns: A tuple of [True, velocity, pitch, yaw, X] if it succeeds at a solve, and a tuple of[False, 0] if it fails.
     """
-    problem, shooter_wrt_field, v0_wrt_shooter, T, X = setup_problem(
-        distance
-    )
+    problem, shooter_wrt_field, v0_wrt_shooter, T, X = setup_problem(distance)
 
     p_x = X[0, :]
     p_y = X[1, :]
@@ -216,9 +214,7 @@ def fixed_pitch(distance, pitch, prev_X):
     Solve for minimum velocity.
     :returns: A tuple of [True, velocity, pitch, yaw, X] if it succeeds at a solve, and a tuple of[False, 0] if it fails.
     """
-    problem, shooter_wrt_field, v0_wrt_shooter, T, X = setup_problem(
-        distance
-    )
+    problem, shooter_wrt_field, v0_wrt_shooter, T, X = setup_problem(distance)
 
     prev_p_x = prev_X[0, :]
     prev_p_y = prev_X[1, :]
@@ -283,15 +279,11 @@ def max_velocity(distance, min_vel_solve):
     )
     if not avg_pitch_solve[0]:
         raise Exception("Fixed pitch solve stage 1 failed")
-    fixed_pitch_solve = fixed_pitch(
-        distance, np.deg2rad(89), avg_pitch_solve[4]
-    )
+    fixed_pitch_solve = fixed_pitch(distance, np.deg2rad(89), avg_pitch_solve[4])
     if not fixed_pitch_solve[0]:
         raise Exception("Fixed pitch solve stage 2 failed")
 
-    problem, shooter_wrt_field, v0_wrt_shooter, T, X = setup_problem(
-        distance
-    )
+    problem, shooter_wrt_field, v0_wrt_shooter, T, X = setup_problem(distance)
 
     fixed_pitch_X = fixed_pitch_solve[4]
 
@@ -350,6 +342,7 @@ def max_velocity(distance, min_vel_solve):
     print(f"Infeasible at distance {distance:.03f} m with status {status.name}")
     return False, 0
 
+
 def iterate_distance(distance):
     # Solve for minimum velocity
     min_vel_solve = min_velocity(distance)
@@ -363,70 +356,49 @@ def iterate_distance(distance):
         min_max_pitch_delta = max_vel_solve[2] - min_vel_solve[2]
         pitch_samples = math.ceil(min_max_pitch_delta / delta_pitch)
 
-        file.write("    table.put(\n")
-        file.write(f"      {distance},\n")
-        file.write("      makeTable(\n")
-        file.write(
-            f"        entry({min_vel_solve[1]}, new ShotResult("
-            f"{min_vel_solve[2]},  {min_vel_solve[3]})),\n"
-        )
+        file.write("    map.put(\n")
+        file.write(f"        {distance},\n")
+        file.write(f"        entry({min_vel_solve[1]}, {min_vel_solve[2]}),\n")
         prev_solve = min_vel_solve
         for i in range(1, pitch_samples - 1):
             pitch = lerp(min_vel_solve[2], max_vel_solve[2], i / (pitch_samples - 1))
             solve = fixed_pitch(distance, pitch, prev_solve[4])
             if solve[0]:
-                file.write(
-                    f"        entry({solve[1]}, new ShotResult("
-                    f"{solve[2]},  {solve[3]})),\n"
-                )
+                file.write(f"        entry({solve[1]}, {solve[2]}),\n")
                 prev_solve = solve
             else:
                 break
             if pitch + delta_pitch > max_vel_solve[2]:
                 break
-        file.write(
-            f"        entry({max_vel_solve[1]}, new ShotResult("
-            f"{max_vel_solve[2]},  {max_vel_solve[3]}))\n"
-        )
-        file.write("      )\n")
+        file.write(f"        entry({max_vel_solve[1]}, {max_vel_solve[2]})\n")
         file.write("    );\n")
         return min_vel_solve[2]
 
 
 if __name__ == "__main__":
-    file: TextIOWrapper = open("HubShotTable.java", "w")
+    file: TextIOWrapper = open("HubShotMap.java", "w")
     file.write("package frc.cotc.shooter;\n\n")
 
     file.write("import static java.util.Map.entry;\n\n")
 
-    file.write("import edu.wpi.first.math.MathUtil;\n")
-    file.write("import edu.wpi.first.math.interpolation.InterpolatingTreeMap;\n")
-    file.write("import frc.cotc.shooter.ShotTable.ShotResult;\n")
-    file.write("import java.util.Map;\n\n")
-
-    file.write("public final class HubShotTable {\n")
-    file.write("  private HubShotTable() {}\n\n")
-    file.write("  private static final ShotTable table = new ShotTable();\n\n")
+    file.write("public final class HubShotMap {\n")
+    file.write("  private HubShotMap() {}\n\n")
+    file.write("  private static final ShotMap map = new ShotMap();\n\n")
     file.write("  static {\n")
 
     for i in range(distance_samples):
-        distance = lerp(start_distance, end_distance, (i / (distance_samples -
-                                                            1))**distance_exponent)
+        distance = lerp(
+            start_distance,
+            end_distance,
+            (i / (distance_samples - 1)) ** distance_exponent,
+        )
         iterate_distance(distance)
 
     file.write("  }\n\n")
-
-    file.write("  @SafeVarargs\n")
-    file.write("  private static InterpolatingTreeMap<Double, ShotResult> makeTable(\n")
-    file.write("      Map.Entry<Double, ShotResult>... entries) {\n")
     file.write(
-        "    var map = new InterpolatingTreeMap<>(MathUtil::inverseInterpolate, "
-        "ShotResult::interpolate);\n"
+        "  public static Double getPitchRad(double distanceMeters, double "
+        "shotVelocityMetersPerSec) {\n"
     )
-    file.write("    for (var entry : entries) {\n")
-    file.write("      map.put(entry.getKey(), entry.getValue());\n")
-    file.write("    }\n")
-    file.write("    return map;\n")
+    file.write("    return map.get(distanceMeters, shotVelocityMetersPerSec);\n")
     file.write("  }\n")
-
     file.write("}")
